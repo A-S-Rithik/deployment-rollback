@@ -1,0 +1,59 @@
+name: Deployment Health Check and Rollback
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t banking-app:new .
+
+      - name: Save previous working image
+        run: |
+          docker pull nginx:alpine
+          docker tag nginx:alpine banking-app:previous
+
+      - name: Deploy application
+        run: |
+          docker rm -f banking-app || true
+          docker run -d -p 8080:80 --name banking-app banking-app:new
+
+      - name: Health Check
+        id: health
+        run: |
+          for i in {1..5}
+          do
+            echo "Health check attempt $i"
+            if curl -f http://localhost:8080/; then
+              echo "Application is healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "Health check failed"
+          exit 1
+
+      - name: Rollback
+        if: failure()
+        run: |
+          echo "Deployment failed. Starting rollback..."
+          docker rm -f banking-app || true
+          docker run -d -p 8080:80 --name banking-app banking-app:previous
+          echo "Rollback completed"
+
+      - name: Verify rollback
+        if: failure()
+        run: |
+          sleep 3
+          curl -f http://localhost:8080/
+          echo "Previous working application restored"
